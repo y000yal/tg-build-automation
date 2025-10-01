@@ -197,10 +197,12 @@ For each compatible plugin, runs the full build sequence with live output:
   - Validation results for all plugins
   - Detailed build logs for each step
   - Success/failure status
-  - Timing information
+  - **Plugin-wise timing**: Total time for each plugin from composer install to grunt zip
+  - Individual step timing for each build command
   - Error messages and output
   - PHP version compatibility details
 - **Summary Statistics**: Total plugins, compatible plugins, build success rate
+- **Performance Analysis**: Plugin build times comparison and optimization insights
 - **File Organization**: All zip files moved to `build-output` directory
 - **Human-Readable Format**: Markdown report for easy viewing and sharing
 

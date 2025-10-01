@@ -65,6 +65,7 @@ function execCommand(command, cwd, description) {
 
 function execCommandRealtime(command, cwd, description) {
     return new Promise((resolve) => {
+        const startTime = Date.now();
         colorLog(`  ${description}...`, 'yellow');
         
         const child = spawn(command, [], {
@@ -89,18 +90,47 @@ function execCommandRealtime(command, cwd, description) {
         });
         
         child.on('close', (code) => {
+            const endTime = Date.now();
+            const duration = Math.round((endTime - startTime) / 1000);
+            
             if (code === 0) {
-                colorLog(`  ✅ ${description} completed`, 'green');
-                resolve({ success: true, error: null, output, errorOutput });
+                colorLog(`  ✅ ${description} completed (${duration}s)`, 'green');
+                resolve({ 
+                    success: true, 
+                    error: null, 
+                    output, 
+                    errorOutput,
+                    startTime: new Date(startTime).toISOString(),
+                    endTime: new Date(endTime).toISOString(),
+                    duration: duration
+                });
             } else {
-                colorLog(`  ❌ ${description} failed with exit code ${code}`, 'red');
-                resolve({ success: false, error: `Exit code ${code}`, output, errorOutput });
+                colorLog(`  ❌ ${description} failed with exit code ${code} (${duration}s)`, 'red');
+                resolve({ 
+                    success: false, 
+                    error: `Exit code ${code}`, 
+                    output, 
+                    errorOutput,
+                    startTime: new Date(startTime).toISOString(),
+                    endTime: new Date(endTime).toISOString(),
+                    duration: duration
+                });
             }
         });
         
         child.on('error', (error) => {
-            colorLog(`  ❌ ${description} failed: ${error.message}`, 'red');
-            resolve({ success: false, error: error.message, output, errorOutput });
+            const endTime = Date.now();
+            const duration = Math.round((endTime - startTime) / 1000);
+            colorLog(`  ❌ ${description} failed: ${error.message} (${duration}s)`, 'red');
+            resolve({ 
+                success: false, 
+                error: error.message, 
+                output, 
+                errorOutput,
+                startTime: new Date(startTime).toISOString(),
+                endTime: new Date(endTime).toISOString(),
+                duration: duration
+            });
         });
     });
 }
@@ -370,7 +400,10 @@ async function buildPluginRealtime(pluginPath, pluginName) {
             success: stepResult.success,
             error: stepResult.error,
             output: stepResult.output,
-            errorOutput: stepResult.errorOutput
+            errorOutput: stepResult.errorOutput,
+            startTime: stepResult.startTime,
+            endTime: stepResult.endTime,
+            duration: stepResult.duration
         };
         
         if (!stepResult.success) {
@@ -401,10 +434,13 @@ async function buildPluginRealtime(pluginPath, pluginName) {
     pluginResult.endTime = new Date().toISOString();
     pluginResult.success = !pluginResult.error;
     
+    // Calculate total plugin build duration
+    pluginResult.totalDuration = Math.round((new Date(pluginResult.endTime) - new Date(pluginResult.startTime)) / 1000);
+    
     if (pluginResult.success) {
-    colorLog(`  🎉 ${pluginName} built successfully!`, 'green');
+        colorLog(`  🎉 ${pluginName} built successfully! (Total: ${pluginResult.totalDuration}s)`, 'green');
     } else {
-        colorLog(`  ❌ ${pluginName} build failed!`, 'red');
+        colorLog(`  ❌ ${pluginName} build failed! (Total: ${pluginResult.totalDuration}s)`, 'red');
     }
     
     return pluginResult;
@@ -511,16 +547,17 @@ function generateResultReport(validationResults, buildResults) {
 
                         markdownReport += `### ${pluginName}
 - **Status:** ${status}
-- **Duration:** ${pluginFormattedDuration}
+- **Total Duration:** ${pluginFormattedDuration} (from composer install to grunt zip)
 - **Zip File:** ${pluginResult.zipFile ? `✅ ${pluginResult.zipFile}` : '❌ Not created'}
 - **Error:** ${pluginResult.error || 'None'}
 
-#### Build Steps
+#### Build Steps Timing
 `;
 
             Object.entries(pluginResult.steps).forEach(([stepName, stepData]) => {
                 const stepStatus = stepData.success ? '✅' : '❌';
-                markdownReport += `- **${stepData.description}:** ${stepStatus} ${stepData.success ? 'Completed' : 'Failed'}\n`;
+                const stepDuration = stepData.duration ? ` (${stepData.duration}s)` : '';
+                markdownReport += `- **${stepData.description}:** ${stepStatus} ${stepData.success ? 'Completed' : 'Failed'}${stepDuration}\n`;
                 if (!stepData.success && stepData.error) {
                     markdownReport += `  - Error: ${stepData.error}\n`;
                 }
@@ -544,6 +581,79 @@ The following plugins could not be built due to compatibility issues:
         validationResults.incompatiblePlugins.forEach(plugin => {
             markdownReport += `- ${plugin}\n`;
         });
+        markdownReport += '\n';
+    }
+
+    // Add performance analysis section
+    if (Object.keys(buildResults.plugins).length > 0) {
+        markdownReport += `## 📊 Performance Analysis
+
+### Plugin Build Times Comparison
+`;
+
+        // Sort plugins by build time for analysis
+        const pluginTimes = Object.entries(buildResults.plugins)
+            .map(([name, result]) => ({
+                name,
+                duration: result.totalDuration || 0,
+                success: result.success
+            }))
+            .sort((a, b) => b.duration - a.duration);
+
+        pluginTimes.forEach((plugin, index) => {
+            const status = plugin.success ? '✅' : '❌';
+            const formattedDuration = formatDuration(plugin.duration);
+            markdownReport += `${index + 1}. **${plugin.name}:** ${status} ${formattedDuration}\n`;
+        });
+
+        // Calculate statistics
+        const successfulPlugins = pluginTimes.filter(p => p.success);
+        const totalTime = pluginTimes.reduce((sum, p) => sum + p.duration, 0);
+        const avgTime = successfulPlugins.length > 0 ? Math.round(totalTime / successfulPlugins.length) : 0;
+        const fastestPlugin = successfulPlugins.length > 0 ? successfulPlugins[successfulPlugins.length - 1] : null;
+        const slowestPlugin = successfulPlugins.length > 0 ? successfulPlugins[0] : null;
+
+        markdownReport += `
+### Performance Statistics
+- **Total Build Time:** ${formatDuration(totalTime)}
+- **Average Build Time:** ${formatDuration(avgTime)}
+- **Fastest Plugin:** ${fastestPlugin ? `${fastestPlugin.name} (${formatDuration(fastestPlugin.duration)})` : 'N/A'}
+- **Slowest Plugin:** ${slowestPlugin ? `${slowestPlugin.name} (${formatDuration(slowestPlugin.duration)})` : 'N/A'}
+
+### Step Timing Analysis
+`;
+
+        // Analyze step timings across all plugins
+        const stepStats = {};
+        Object.values(buildResults.plugins).forEach(plugin => {
+            Object.entries(plugin.steps).forEach(([stepName, stepData]) => {
+                if (!stepStats[stepName]) {
+                    stepStats[stepName] = {
+                        name: stepData.description,
+                        times: [],
+                        successes: 0,
+                        failures: 0
+                    };
+                }
+                if (stepData.duration) {
+                    stepStats[stepName].times.push(stepData.duration);
+                }
+                if (stepData.success) {
+                    stepStats[stepName].successes++;
+                } else {
+                    stepStats[stepName].failures++;
+                }
+            });
+        });
+
+        Object.entries(stepStats).forEach(([stepName, stats]) => {
+            const avgTime = stats.times.length > 0 ? Math.round(stats.times.reduce((a, b) => a + b, 0) / stats.times.length) : 0;
+            const maxTime = stats.times.length > 0 ? Math.max(...stats.times) : 0;
+            const minTime = stats.times.length > 0 ? Math.min(...stats.times) : 0;
+            
+            markdownReport += `- **${stats.name}:** Avg: ${avgTime}s, Min: ${minTime}s, Max: ${maxTime}s (${stats.successes}✅/${stats.failures}❌)\n`;
+        });
+
         markdownReport += '\n';
     }
 
