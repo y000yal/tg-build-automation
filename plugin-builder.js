@@ -2,7 +2,7 @@
 
 /**
  * Node.js script to build specific User Registration plugins and create zip files
- * Usage: node build-all-plugins.js [options]
+ * Usage: node plugin-builder.js [options]
  */
 
 const { execSync, spawn } = require('child_process');
@@ -846,7 +846,7 @@ async function main() {
 const args = process.argv.slice(2);
 if (args.includes('--help') || args.includes('-h')) {
     console.log(`
-Usage: node build-all-plugins.js [options]
+Usage: node plugin-builder.js [options]
 
 Options:
   --help, -h     Show this help message

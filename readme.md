@@ -2,23 +2,33 @@
 
 This directory contains a cross-platform automation script to build selected User Registration plugins with a single command, eliminating the need to manually run `composer install`, `npm install`, `grunt css`, `grunt js`, `npm run build`, and `grunt zip` for each plugin. The script creates zip files for distribution and organizes them in an output folder.
 
+## ⚠️ Important Recommendations
+
+**Before running this automation:**
+
+1. **Add all changelogs** for the plugins you plan to release - this automation is specifically designed for release preparation
+2. **Avoid building core plugins** - It's recommended NOT to build `user-registration` and `user-registration-pro` plugins unless absolutely necessary, as these are typically handled separately
+3. **Run after development is complete** - This tool is intended for final release builds, not development iterations
+
 ## Quick Start
 
-**1. Navigate to the build automation folder:**
+**1. Clone the automation repository anywhere on your system:**
 ```bash
-cd wp-content/plugins/build-automation
+# Clone the repository anywhere - configure pluginsPath in plugin-list.json
+git clone <repository-url> my-build-automation
+cd my-build-automation
 ```
 
-**2. Edit the plugin list:**
+**2. Configure the plugin list:**
 ```bash
-# Edit plugin-list.json to select which plugins to build
+# Edit plugin-list.json to select which plugins to build and set pluginsPath
 nano plugin-list.json  # or use any text editor
 ```
 
 **3. Run the script:**
 ```bash
 # Build selected plugins and create zip files
-node build-all-plugins.js
+node plugin-builder.js
 ```
 
 **4. Find your zip files:**
@@ -27,21 +37,91 @@ node build-all-plugins.js
 ls build-output/
 ```
 
+## Configuration & Placement
+
+### Flexible Placement
+This automation repository can be cloned **anywhere** on your system. You don't need to keep it in the WordPress plugins directory. Simply configure the `pluginsPath` in your `plugin-list.json` to point to your WordPress plugins directory.
+
+### Configuration File: `plugin-list.json`
+
+The script reads its configuration from `plugin-list.json`. Here's the complete configuration structure:
+
+```json
+{
+  "description": "Plugin list for automated building",
+  "version": "1.0.0",
+  "pluginsPath": "../wp-content/plugins",
+  "plugins": [
+    "user-registration-activecampaign",
+    "user-registration-advanced-fields",
+    "user-registration-authorize-net"
+  ],
+  "buildSettings": {
+    "outputDirectory": "build-output",
+    "buildSteps": [
+      {
+        "name": "composer",
+        "command": "composer install --no-dev --optimize-autoloader",
+        "description": "Composer install"
+      },
+      {
+        "name": "npm",
+        "command": "npm install",
+        "description": "NPM install"
+      },
+      {
+        "name": "gruntCss",
+        "command": "grunt css",
+        "description": "Grunt CSS"
+      },
+      {
+        "name": "gruntJs",
+        "command": "grunt js",
+        "description": "Grunt JS"
+      },
+      {
+        "name": "npmBuild",
+        "command": "npm run build",
+        "description": "NPM build"
+      },
+      {
+        "name": "gruntZip",
+        "command": "grunt zip",
+        "description": "Grunt ZIP"
+      }
+    ]
+  }
+}
+```
+
+### Configuration Options
+
+- **`pluginsPath`**: Relative or absolute path to your WordPress plugins directory
+  - Example: `"../wp-content/plugins"` (relative)
+  - Example: `"/var/www/html/wp-content/plugins"` (absolute)
+  - Example: `"C:\\laragon\\www\\local\\wp-content\\plugins"` (Windows absolute)
+
+- **`plugins`**: Array of plugin names to build (must start with `user-registration-`)
+
+- **`buildSettings.outputDirectory`**: Where to save the final zip files
+
+- **`buildSettings.buildSteps`**: Customizable build commands in execution order
+
 ## Available Script
 
 ### Node.js Script (Cross-platform)
-**File:** `build-all-plugins.js`
+**File:** `plugin-builder.js`
 
 **Usage:**
 ```bash
 # Build selected plugins (reads from plugin-list.json)
-node build-all-plugins.js
+node plugin-builder.js
 
 # Show help
-node build-all-plugins.js --help
+node plugin-builder.js --help
 
 # Show version
-node build-all-plugins.js --version
+node plugin-builder.js --version
 ```
 
 **Features:**
@@ -126,7 +206,7 @@ For each compatible plugin, runs the full build sequence with live output:
 
 ## Plugin Selection
 
-The script reads plugin configuration from `plugin-list.json` file. This allows you to:
+The script reads plugin configuration from `plugin-list.json` file (see Configuration section above). This allows you to:
 
 - **Select specific plugins** to build (in the `plugins` array)
 - **Configure build settings** like output directory and custom build steps
@@ -192,60 +272,17 @@ The script reads plugin configuration from `plugin-list.json` file. This allows 
 ]
 ```
 
-**Example plugin-list.json:**
-```json
-{
-  "description": "Plugin list for automated building",
-  "version": "1.0.0",
-  "plugins": [
-    "user-registration-pro",
-    "user-registration-activecampaign",
-    "user-registration-advanced-fields"
-  ],
-  "buildSettings": {
-    "outputDirectory": "build-output",
-    "buildSteps": [
-      {
-        "name": "composer",
-        "command": "composer install --no-dev --optimize-autoloader",
-        "description": "Composer install"
-      },
-      {
-        "name": "npm",
-        "command": "npm install",
-        "description": "NPM install"
-      },
-      {
-        "name": "gruntCss",
-        "command": "grunt css",
-        "description": "Grunt CSS"
-      },
-      {
-        "name": "gruntJs",
-        "command": "grunt js",
-        "description": "Grunt JS"
-      },
-      {
-        "name": "npmBuild",
-        "command": "npm run build",
-        "description": "NPM build"
-      },
-      {
-        "name": "gruntZip",
-        "command": "grunt zip",
-        "description": "Grunt ZIP"
-      }
-    ]
-  }
-}
-```
 
 **Available plugins include:**
-- `user-registration-pro`
 - `user-registration-activecampaign`
 - `user-registration-advanced-fields`
 - `user-registration-authorize-net`
-- And all other User Registration plugins...
+- `user-registration-mailchimp`
+- `user-registration-paypal`
+- `user-registration-stripe`
+- And all other User Registration extension plugins...
+
+> **Note:** `user-registration` and `user-registration-pro` are core plugins and not recommended for automated building unless absolutely necessary.
 
 ## Zip File Output
 
@@ -297,7 +334,7 @@ The script provides timing information to help you understand build performance.
 
 ### Getting Help
 
-- Script: `node build-all-plugins.js --help`
+- Script: `node plugin-builder.js --help`
 
 ## Customization
 
@@ -315,12 +352,12 @@ The script can be easily integrated into CI/CD pipelines:
 ```yaml
 # GitHub Actions example
 - name: Build selected plugins
-  run: node build-all-plugins.js
+  run: node plugin-builder.js
 ```
 
 ```bash
 # Jenkins example
-node build-all-plugins.js
+node plugin-builder.js
 ```
 
 The script is ready to use and will work on any system with Node.js installed!
