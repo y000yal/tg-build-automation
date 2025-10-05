@@ -1,41 +1,48 @@
 {
   "description": "Plugin list for automated building",
   "version": "1.0.0",
-  "plugins": [
-    "user-registration-stripe"
+  "plugins": ["user-registration-pro"],
+  "ignore": [
+    
   ],
   "buildSettings": {
     "outputDirectory": "build-output",
     "buildSteps": [
       {
         "name": "composer",
-        "command": "composer install --optimize-autoloader",
-        "description": "Composer install"
+        "command": "composer install",
+        "description": "Composer install",
+        "skip": false
       },
       {
         "name": "npm",
         "command": "npm install --legacy-peer-deps",
-        "description": "NPM install"
+        "description": "NPM install",
+        "skip": false
       },
       {
         "name": "gruntCss",
         "command": "grunt css",
-        "description": "Grunt CSS"
+        "description": "Grunt CSS",
+        "skip": false
       },
       {
         "name": "gruntJs",
         "command": "grunt js",
-        "description": "Grunt JS"
+        "description": "Grunt JS",
+        "skip": false
       },
       {
         "name": "npmBuild",
         "command": "npm run build",
-        "description": "NPM build"
+        "description": "NPM build",
+        "skip": false
       },
       {
         "name": "gruntZip",
         "command": "grunt zip",
-        "description": "Grunt ZIP"
+        "description": "Grunt ZIP",
+        "skip": true
       }
     ]
   }

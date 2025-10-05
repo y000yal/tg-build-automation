@@ -19,7 +19,7 @@ const CONFIG = {
   resultFile: "build-results.md",
   // Default commands (used if not specified in config)
   defaultCommands: {
-    composer: "composer install --no-dev --optimize-autoloader",
+    composer: "composer install",
     npm: "npm install --legacy-peer-deps",
     gruntCss: "grunt css",
     gruntJs: "grunt js",
@@ -434,12 +434,23 @@ async function buildPluginRealtime(pluginPath, pluginName) {
   // Get build steps from config or use defaults
   let steps;
   if (CONFIG.customBuildSteps && CONFIG.customBuildSteps.length > 0) {
-    // Use custom build steps from config
-    steps = CONFIG.customBuildSteps.map((step, index) => ({
-      key: step.name || `step_${index}`,
-      cmd: step.command,
-      desc: step.description || step.command,
-    }));
+    // Use custom build steps from config, filtering out skipped steps
+    steps = CONFIG.customBuildSteps
+      .filter((step) => !step.skip) // Skip steps marked with skip: true
+      .map((step, index) => ({
+        key: step.name || `step_${index}`,
+        cmd: step.command,
+        desc: step.description || step.command,
+      }));
+    
+    // Log skipped steps
+    const skippedSteps = CONFIG.customBuildSteps.filter((step) => step.skip);
+    if (skippedSteps.length > 0) {
+      colorLog(`  ⏭️  Skipped ${skippedSteps.length} build steps:`, "yellow");
+      skippedSteps.forEach((step) => {
+        colorLog(`    • ${step.description || step.name || step.command}`, "yellow");
+      });
+    }
   } else {
     // Use default build steps
     steps = [
@@ -486,36 +497,57 @@ async function buildPluginRealtime(pluginPath, pluginName) {
       duration: stepResult.duration,
     };
 
+    // Continue with remaining steps even if grunt js or grunt css fails
     if (!stepResult.success) {
-      pluginResult.error = stepResult.error;
-      break;
+      if (step.key === "gruntJs" || step.key === "gruntCss") {
+        const stepName = step.key === "gruntJs" ? "Grunt JS" : "Grunt CSS";
+        colorLog(`  ⚠️  ${stepName} failed, but continuing with remaining steps...`, "yellow");
+        pluginResult.error = stepResult.error; // Store the error but don't break
+      } else {
+        // For other steps, still break on failure
+        pluginResult.error = stepResult.error;
+        break;
+      }
     }
   }
 
-  // Move zip file to output directory
+  // Move zip file to output directory (only if grunt zip step was executed)
   const zipFile = `${pluginName}.zip`;
   const sourceZipPath = path.join(pluginPath, zipFile);
   const destZipPath = path.join(CONFIG.outputDir, zipFile);
 
-  if (fs.existsSync(sourceZipPath)) {
-    try {
-      fs.copyFileSync(sourceZipPath, destZipPath);
-      pluginResult.zipFile = destZipPath;
-      colorLog(`  📦 Zip file moved to: ${destZipPath}`, "cyan");
-      // Clean up original zip file
-      fs.unlinkSync(sourceZipPath);
-    } catch (error) {
-      colorLog(
-        `  ⚠️  Warning: Could not move zip file: ${error.message}`,
-        "yellow"
-      );
+  // Check if grunt zip step was executed (not skipped)
+  const gruntZipStepExecuted = steps.some(step => step.key === "gruntZip");
+
+  if (gruntZipStepExecuted) {
+    if (fs.existsSync(sourceZipPath)) {
+      try {
+        fs.copyFileSync(sourceZipPath, destZipPath);
+        pluginResult.zipFile = destZipPath;
+        colorLog(`  📦 Zip file moved to: ${destZipPath}`, "cyan");
+        // Clean up original zip file
+        fs.unlinkSync(sourceZipPath);
+      } catch (error) {
+        colorLog(
+          `  ⚠️  Warning: Could not move zip file: ${error.message}`,
+          "yellow"
+        );
+      }
+    } else {
+      colorLog(`  ⚠️  Warning: Zip file not found: ${zipFile}`, "yellow");
     }
   } else {
-    colorLog(`  ⚠️  Warning: Zip file not found: ${zipFile}`, "yellow");
+    colorLog(`  ⏭️  Zip file creation skipped (grunt zip step was skipped)`, "yellow");
   }
 
   pluginResult.endTime = new Date().toISOString();
-  pluginResult.success = !pluginResult.error;
+  
+  // Determine success: build is successful if no critical errors occurred
+  // Grunt JS and Grunt CSS failures are not considered critical errors
+  const gruntJsFailed = pluginResult.steps.gruntJs?.success === false;
+  const gruntCssFailed = pluginResult.steps.gruntCss?.success === false;
+  const hasCriticalError = pluginResult.error && !gruntJsFailed && !gruntCssFailed;
+  pluginResult.success = !hasCriticalError;
 
   // Calculate total plugin build duration
   pluginResult.totalDuration = Math.round(
@@ -918,7 +950,7 @@ The following plugins could not be built due to compatibility issues:
   };
 }
 
-function getPluginDirectories(pluginList = null) {
+function getPluginDirectories(pluginList = null, ignoreList = []) {
   const pluginsDir = path.resolve(CONFIG.pluginsPath);
 
   if (!fs.existsSync(pluginsDir)) {
@@ -930,7 +962,24 @@ function getPluginDirectories(pluginList = null) {
     (entry) => entry.isDirectory() && CONFIG.pluginPattern.test(entry.name)
   );
 
-  // If plugin list is provided, filter to only those plugins
+  // Apply ignore list first
+  if (ignoreList && ignoreList.length > 0) {
+    const beforeIgnore = filteredEntries.length;
+    filteredEntries = filteredEntries.filter((entry) => 
+      !ignoreList.includes(entry.name)
+    );
+    const afterIgnore = filteredEntries.length;
+    if (beforeIgnore !== afterIgnore) {
+      colorLog(`🚫 Ignored ${beforeIgnore - afterIgnore} plugins:`, "yellow");
+      ignoreList.forEach((plugin) => {
+        if (entries.some(entry => entry.name === plugin)) {
+          colorLog(`  • ${plugin}`, "yellow");
+        }
+      });
+    }
+  }
+
+  // If plugin list is provided and not empty, filter to only those plugins
   if (pluginList && pluginList.length > 0) {
     filteredEntries = filteredEntries.filter((entry) =>
       pluginList.includes(entry.name)
@@ -950,6 +999,13 @@ function getPluginDirectories(pluginList = null) {
       );
       throw new Error(`Missing plugins: ${missingPlugins.join(", ")}`);
     }
+    
+    colorLog(`📋 Processing ${filteredEntries.length} specified plugins:`, "blue");
+    filteredEntries.forEach((entry) => colorLog(`  • ${entry.name}`, "yellow"));
+  } else {
+    // If no specific plugins listed, process all plugins (except ignored ones)
+    colorLog(`📋 Processing all plugins (${filteredEntries.length} found, ${ignoreList.length} ignored):`, "blue");
+    filteredEntries.forEach((entry) => colorLog(`  • ${entry.name}`, "yellow"));
   }
 
   return filteredEntries.map((entry) => ({
@@ -975,8 +1031,9 @@ function loadPluginList() {
     const content = fs.readFileSync(listPath, "utf8");
     const config = JSON.parse(content);
 
-    // Get plugins array (simplified structure)
+    // Get plugins array and ignore array
     const plugins = config.plugins || [];
+    const ignoreList = config.ignore || [];
 
     // Validate plugin names
     const invalidPlugins = plugins.filter(
@@ -995,6 +1052,23 @@ function loadPluginList() {
       return null;
     }
 
+    // Validate ignore list names
+    const invalidIgnorePlugins = ignoreList.filter(
+      (plugin) => !plugin.startsWith("user-registration-")
+    );
+    if (invalidIgnorePlugins.length > 0) {
+      colorLog(
+        `❌ Invalid ignore plugin names found (must start with 'user-registration-'):`,
+        "red"
+      );
+      invalidIgnorePlugins.forEach((plugin) => colorLog(`  • ${plugin}`, "red"));
+      colorLog(
+        `💡 Please fix the ignore plugin names in ${CONFIG.pluginListFile}`,
+        "yellow"
+      );
+      return null;
+    }
+
     // Store custom build steps if specified
     CONFIG.customBuildSteps = config.buildSettings?.buildSteps || null;
 
@@ -1003,13 +1077,28 @@ function loadPluginList() {
       CONFIG.outputDir = config.buildSettings.outputDirectory;
     }
 
-    colorLog(
-      `📋 Loaded ${plugins.length} plugins from ${CONFIG.pluginListFile}:`,
-      "blue"
-    );
-    plugins.forEach((plugin) => colorLog(`  • ${plugin}`, "yellow"));
+    if (plugins.length > 0) {
+      colorLog(
+        `📋 Loaded ${plugins.length} plugins from ${CONFIG.pluginListFile}:`,
+        "blue"
+      );
+      plugins.forEach((plugin) => colorLog(`  • ${plugin}`, "yellow"));
+    } else {
+      colorLog(
+        `📋 No specific plugins listed - will process all plugins (except ignored ones)`,
+        "blue"
+      );
+    }
 
-    return plugins;
+    if (ignoreList.length > 0) {
+      colorLog(
+        `🚫 Ignore list (${ignoreList.length} plugins):`,
+        "yellow"
+      );
+      ignoreList.forEach((plugin) => colorLog(`  • ${plugin}`, "yellow"));
+    }
+
+    return { plugins, ignoreList };
   } catch (error) {
     colorLog(`❌ Error reading plugin list: ${error.message}`, "red");
     return null;
@@ -1025,6 +1114,10 @@ function createExamplePluginList() {
       "user-registration-activecampaign",
       "user-registration-advanced-fields",
     ],
+    ignore: [
+      "user-registration-stripe",
+      "user-registration-mailchimp",
+    ],
     buildSettings: {
       outputDirectory: "build-output",
       buildSteps: [
@@ -1032,31 +1125,37 @@ function createExamplePluginList() {
           name: "composer",
           command: "composer install --no-dev --optimize-autoloader",
           description: "Composer install",
+          skip: false,
         },
         {
           name: "npm",
           command: "npm install --legacy-peer-deps",
           description: "NPM install",
+          skip: false,
         },
         {
           name: "gruntCss",
           command: "grunt css",
           description: "Grunt CSS",
+          skip: false,
         },
         {
           name: "gruntJs",
           command: "grunt js",
           description: "Grunt JS",
+          skip: false,
         },
         {
           name: "npmBuild",
           command: "npm run build",
           description: "NPM build",
+          skip: false,
         },
         {
           name: "gruntZip",
           command: "grunt zip",
           description: "Grunt ZIP",
+          skip: false,
         },
       ],
     },
@@ -1103,16 +1202,21 @@ async function main() {
     setupOutputDirectory();
 
     // Load plugin list
-    const pluginList = loadPluginList();
+    const pluginConfig = loadPluginList();
+
+    if (!pluginConfig) {
+      colorLog("❌ Failed to load plugin configuration", "red");
+      process.exit(1);
+    }
 
     // Get plugins to build
-    const plugins = getPluginDirectories(pluginList);
+    const plugins = getPluginDirectories(pluginConfig.plugins, pluginConfig.ignoreList);
 
     if (plugins.length === 0) {
       colorLog("❌ No plugins found to build", "red");
-      if (!pluginList) {
+      if (!pluginConfig.plugins || pluginConfig.plugins.length === 0) {
         colorLog(
-          "💡 Edit the plugin-list.json file to specify which plugins to build",
+          "💡 Edit the plugin-list.json file to specify which plugins to build, or add plugins to the ignore list",
           "yellow"
         );
       }
